@@ -139,12 +139,9 @@ impl Client {
         }
 
         let url = &format!("{}/query", &self.url);
-        let mut parameters = self.parameters.as_ref().clone();
-        parameters.insert("q", read_query);
         let request = self
-            .client
-            .request(reqwest::Method::GET, url)
-            .query(&parameters)
+            .build_db_request(reqwest::Method::GET, url)
+            .query(&[("q", read_query)])
             .build()
             .map_err(|err| Error::UrlConstructionError {
                 error: err.to_string(),

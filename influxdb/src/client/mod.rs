@@ -20,14 +20,14 @@ use futures::prelude::*;
 use crate::query::QueryType;
 use crate::Error;
 use crate::Query;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 /// Internal Representation of a Client
 pub struct Client {
     pub(crate) url: Arc<String>,
-    pub(crate) parameters: Arc<HashMap<&'static str, String>>,
+    pub(crate) database: (&'static str, String),
+    pub(crate) credentials: Option<([(&'static str, String); 2])>,
     pub(crate) client: reqwest::Client,
 }
 
@@ -51,12 +51,11 @@ impl Client {
         S1: Into<String>,
         S2: Into<String>,
     {
-        let mut parameters = HashMap::<&str, String>::new();
-        parameters.insert("db", database.into());
         Client {
             url: Arc::new(url.into()),
-            parameters: Arc::new(parameters),
             client: reqwest::Client::new(),
+            database: ("db", database.into()),
+            credentials: None,
         }
     }
 
@@ -79,17 +78,14 @@ impl Client {
         S1: Into<String>,
         S2: Into<String>,
     {
-        let mut with_auth = self.parameters.as_ref().clone();
-        with_auth.insert("u", username.into());
-        with_auth.insert("p", password.into());
-        self.parameters = Arc::new(with_auth);
+        self.credentials = Some([("u", username.into()), ("p", password.into())]);
         self
     }
 
     /// Returns the name of the database the client is using
     pub fn database_name(&self) -> &str {
         // safe to unwrap: we always set the database name in `Self::new`
-        self.parameters.get("db").unwrap()
+        &self.database.1
     }
 
     /// Returns the URL of the InfluxDB installation the client is using
@@ -183,29 +179,22 @@ impl Client {
             QueryType::ReadQuery => {
                 let read_query = query.get();
                 let url = &format!("{}/query", &self.url);
-                let mut parameters = self.parameters.as_ref().clone();
-                parameters.insert("q", read_query.clone());
 
                 if read_query.contains("SELECT") || read_query.contains("SHOW") {
-                    self.client
-                        .request(reqwest::Method::GET, url)
-                        .query(&parameters)
+                    self.build_db_request(reqwest::Method::GET, url)
+                        .query(&[("q", read_query)])
                         .build()
                 } else {
-                    self.client
-                        .request(reqwest::Method::POST, url)
-                        .query(&parameters)
+                    self.build_db_request(reqwest::Method::POST, url)
+                        .query(&[("q", read_query)])
                         .build()
                 }
             }
             QueryType::WriteQuery(precision) => {
                 let url = &format!("{}/write", &self.url);
-                let mut parameters = self.parameters.as_ref().clone();
-                parameters.insert("precision", precision);
-                self.client
-                    .request(reqwest::Method::POST, url)
+                self.build_db_request(reqwest::Method::POST, url)
                     .body(query.get())
-                    .query(&parameters)
+                    .query(&[("precision", precision)])
                     .build()
             }
         }
@@ -243,6 +232,16 @@ impl Client {
 
         Ok(s)
     }
+
+    pub fn build_db_request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        let mut req = self.client.request(method, url).query(&[&self.database]);
+
+        if let Some(credentials) = &self.credentials {
+            req = req.query(&credentials);
+        }
+
+        req
+    }
 }
 
 #[cfg(test)]
@@ -259,13 +258,12 @@ mod tests {
     #[test]
     fn test_with_auth() {
         let client = Client::new("http://localhost:8068", "database");
-        assert_eq!(client.parameters.len(), 1);
-        assert_eq!(client.parameters.get("db").unwrap(), "database");
+        assert_eq!(client.database, ("db", "database".to_string()));
 
         let with_auth = client.with_auth("username", "password");
-        assert_eq!(with_auth.parameters.len(), 3);
-        assert_eq!(with_auth.parameters.get("db").unwrap(), "database");
-        assert_eq!(with_auth.parameters.get("u").unwrap(), "username");
-        assert_eq!(with_auth.parameters.get("p").unwrap(), "password");
+        assert_eq!(
+            with_auth.credentials,
+            Some([("u", "username".to_string()), ("p", "password".to_string()),])
+        );
     }
 }
