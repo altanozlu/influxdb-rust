@@ -2,13 +2,12 @@
 /// https://docs.influxdata.com/influxdb/v1.7/write_protocols/line_protocol_tutorial/
 use crate::Type;
 use lazy_static::lazy_static;
-use regex::Regex;
 
 lazy_static! {
-    pub static ref COMMAS_SPACES: Regex = Regex::new("[, ]").unwrap();
-    pub static ref COMMAS_SPACES_EQUALS: Regex = Regex::new("[, =]").unwrap();
-    pub static ref QUOTES_SLASHES: Regex = Regex::new(r#"["\\]"#).unwrap();
-    pub static ref SLASHES: Regex = Regex::new(r#"(\\|,| |=|")"#).unwrap();
+    pub static ref COMMAS_SPACES: [char; 2] = [',', ' '];
+    pub static ref COMMAS_SPACES_EQUALS: [char; 3] = [',', ' ', '='];
+    pub static ref QUOTES_SLASHES: [char; 2] = ['"', '\\'];
+    pub static ref SLASHES: [char; 5] = ['\\', ',', ' ', '"', '='];
 }
 
 pub enum LineProtoTerm<'a> {
@@ -66,8 +65,17 @@ impl LineProtoTerm<'_> {
         }
     }
 
-    fn escape_any(s: &str, re: &Regex) -> String {
-        re.replace_all(s, r#"\$0"#).to_string()
+    fn escape_any(s: &str, chars: &[char]) -> String {
+        let mut result = String::with_capacity(s.len());
+        let mut last_end = 0;
+        for (start, part) in s.match_indices(chars) {
+            result.push_str(unsafe { s.get_unchecked(last_end..start) });
+            result.push('\\');
+            result.push_str(part);
+            last_end = start + part.len();
+        }
+        result.push_str(unsafe { s.get_unchecked(last_end..s.len()) });
+        result
     }
 }
 
